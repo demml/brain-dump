@@ -9,14 +9,19 @@
   let { task, onStatusChange }: Props = $props();
 
   let loading = $state(false);
+  let taskError = $state<string | null>(null);
 
   async function toggleComplete() {
     if (loading) return;
     loading = true;
+    taskError = null;
     try {
       const newStatus = task.status === "completed" ? "active" : "completed";
       await updateNode(task.id, undefined, undefined, newStatus);
       onStatusChange?.();
+    } catch (e) {
+      taskError = e instanceof Error ? e.message : String(e);
+      console.error("toggleComplete failed:", e);
     } finally {
       loading = false;
     }
@@ -50,3 +55,6 @@
     <span class="text-xs" style="color: var(--color-phosphor-muted);">archived</span>
   {/if}
 </div>
+{#if taskError}
+  <p class="text-xs px-2 pb-1" style="color: var(--color-danger);">{taskError}</p>
+{/if}

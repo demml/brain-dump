@@ -4,7 +4,7 @@
   interface Props { content: string; }
   let { content }: Props = $props();
 
-  let html = $derived(marked.parse(content) as string);
+  let html = $derived(marked.parse(content, { async: false }));
 </script>
 
 <div class="markdown-content">{@html html}</div>

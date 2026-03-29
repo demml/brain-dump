@@ -11,6 +11,7 @@
   let expanded = $state(false);
   let tasks = $state<Node[]>([]);
   let tasksLoaded = $state(false);
+  let phaseError = $state<string | null>(null);
 
   async function loadTasks() {
     if (!tasksLoaded) {
@@ -21,11 +22,23 @@
 
   async function toggle() {
     expanded = !expanded;
-    if (expanded) await loadTasks();
+    if (expanded) {
+      phaseError = null;
+      try {
+        await loadTasks();
+      } catch (e) {
+        phaseError = e instanceof Error ? e.message : String(e);
+        console.error("loadTasks failed:", e);
+      }
+    }
   }
 
   async function refreshTasks() {
-    tasks = await listNodes("task", phase.id);
+    try {
+      tasks = await listNodes("task", phase.id);
+    } catch (e) {
+      console.error("refreshTasks failed:", e);
+    }
   }
 
   let completedCount = $derived(tasks.filter(t => t.status === "completed").length);
@@ -67,7 +80,9 @@
   <!-- Task list (expanded) -->
   {#if expanded}
     <div class="border-t" style="border-color: var(--color-border);">
-      {#if tasks.length === 0}
+      {#if phaseError}
+        <p class="text-xs p-3" style="color: var(--color-danger);">{phaseError}</p>
+      {:else if tasks.length === 0}
         <p class="text-xs p-3" style="color: var(--color-phosphor-muted);">No tasks yet.</p>
       {:else}
         {#each tasks as task}
