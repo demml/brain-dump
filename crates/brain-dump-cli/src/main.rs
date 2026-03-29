@@ -219,26 +219,42 @@ fn run(cli: &Cli, conn: &mut Connection) -> Result<(), brain_dump_core::db::DbEr
                 .parse::<EdgeType>()
                 .map_err(brain_dump_core::db::DbError::Custom)?;
             queries::delete_edge(conn, &src, et, &tgt)?;
-            println!("Unlinked {} --[{}]--> {}", source, edge_type, target);
+            if cli.json {
+                println!("{}", serde_json::json!({"status": "ok", "message": format!("unlinked {} --[{}]--> {}", source, edge_type, target)}));
+            } else {
+                println!("Unlinked {} --[{}]--> {}", source, edge_type, target);
+            }
         }
 
         Commands::Delete { id } => {
             let resolved = queries::resolve_node(conn, id)?;
             let node = queries::get_node(conn, &resolved)?;
             queries::delete_node(conn, &resolved)?;
-            println!("Deleted {} '{}'", node.node_type.as_str(), node.title);
+            if cli.json {
+                println!("{}", serde_json::json!({"status": "ok", "deleted": {"id": resolved, "type": node.node_type.as_str(), "title": node.title}}));
+            } else {
+                println!("Deleted {} '{}'", node.node_type.as_str(), node.title);
+            }
         }
 
         Commands::Tag { id, name } => {
             let resolved = queries::resolve_node(conn, id)?;
             queries::add_tag(conn, &resolved, name)?;
-            println!("Tagged with '{name}'");
+            if cli.json {
+                println!("{}", serde_json::json!({"status": "ok", "tag": name}));
+            } else {
+                println!("Tagged with '{name}'");
+            }
         }
 
         Commands::Untag { id, name } => {
             let resolved = queries::resolve_node(conn, id)?;
             queries::remove_tag(conn, &resolved, name)?;
-            println!("Removed tag '{name}'");
+            if cli.json {
+                println!("{}", serde_json::json!({"status": "ok", "removed_tag": name}));
+            } else {
+                println!("Removed tag '{name}'");
+            }
         }
     }
     Ok(())
@@ -329,7 +345,11 @@ fn print_detail(detail: &NodeDetail) {
 
 fn edit_in_editor(content: &str) -> Result<String, brain_dump_core::db::DbError> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-    let tmp = std::env::temp_dir().join("bd-edit.md");
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("bd-edit-{ts}.md"));
     std::fs::write(&tmp, content).map_err(brain_dump_core::db::DbError::Io)?;
 
     let status = std::process::Command::new(&editor)
