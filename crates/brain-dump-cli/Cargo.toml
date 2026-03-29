@@ -10,4 +10,5 @@ path = "src/main.rs"
 [dependencies]
 brain-dump-core = { path = "../brain-dump-core" }
 clap = { version = "4", features = ["derive"] }
+rusqlite = { workspace = true }
 serde_json = { workspace = true }
