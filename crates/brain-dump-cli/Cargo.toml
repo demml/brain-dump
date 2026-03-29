@@ -1,0 +1,13 @@
+[package]
+name = "brain-dump-cli"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "bd"
+path = "src/main.rs"
+
+[dependencies]
+brain-dump-core = { path = "../brain-dump-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
