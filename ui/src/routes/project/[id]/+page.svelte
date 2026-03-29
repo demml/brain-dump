@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { page } from "$app/stores";
   import { getNode, updateNode } from "$lib/tauri";
-  import type { NodeDetail } from "$lib/types";
+  import type { NodeDetail, Node } from "$lib/types";
   import MarkdownRenderer from "$lib/components/MarkdownRenderer.svelte";
   import PhaseCard from "$lib/components/PhaseCard.svelte";
   import TagBadge from "$lib/components/TagBadge.svelte";
   import ConnectionBadge from "$lib/components/ConnectionBadge.svelte";
+  import NodeForm from "$lib/components/NodeForm.svelte";
 
   const id = $page.params.id;
 
@@ -14,6 +15,8 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
   let activeTab = $state<"phases" | "connections">("phases");
+  let showEdit = $state(false);
+  let showNewPhase = $state(false);
 
   onMount(async () => {
     try {
@@ -33,6 +36,12 @@
     } catch (e) {
       console.error("archive failed:", e);
     }
+  }
+
+  async function onNodeSaved(_node: Node) {
+    showEdit = false;
+    showNewPhase = false;
+    detail = await getNode(id);
   }
 </script>
 
@@ -56,6 +65,7 @@
       </span>
     </div>
     <div class="flex gap-3 text-sm" style="color: var(--color-phosphor-dim);">
+      <button onclick={() => showEdit = true} style="color: var(--color-phosphor-dim);">Edit</button>
       {#if detail.node.status !== "archived"}
         <button onclick={archive} style="color: var(--color-phosphor-muted);">Archive</button>
       {/if}
@@ -128,6 +138,13 @@
               {/each}
             </div>
           {/if}
+          <button
+            class="mt-3 px-3 py-1.5 text-sm border-2"
+            style="border-color: var(--color-border); color: var(--color-phosphor-dim); box-shadow: var(--shadow-hard);"
+            onclick={() => showNewPhase = true}
+          >
+            + New Phase
+          </button>
         {:else}
           <div class="flex flex-col gap-3">
             {#if detail.blocks.length === 0 && detail.blocked_by.length === 0 && detail.related.length === 0}
@@ -148,4 +165,22 @@
       </div>
     </div>
   </div>
+
+  {#if showEdit && detail}
+    <NodeForm
+      nodeType={detail.node.node_type}
+      node={detail.node}
+      onSave={onNodeSaved}
+      onCancel={() => showEdit = false}
+    />
+  {/if}
+
+  {#if showNewPhase && detail}
+    <NodeForm
+      nodeType="phase"
+      parentId={detail.node.id}
+      onSave={onNodeSaved}
+      onCancel={() => showNewPhase = false}
+    />
+  {/if}
 {/if}

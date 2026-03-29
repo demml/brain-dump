@@ -3,10 +3,12 @@
   import { listNodes } from "$lib/tauri";
   import type { Node } from "$lib/types";
   import ProjectCard from "$lib/components/ProjectCard.svelte";
+  import NodeForm from "$lib/components/NodeForm.svelte";
 
   let projects = $state<Node[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let showNewProject = $state(false);
 
   onMount(async () => {
     try {
@@ -17,6 +19,11 @@
       loading = false;
     }
   });
+
+  async function onProjectSaved(node: Node) {
+    showNewProject = false;
+    projects = await listNodes("project");
+  }
 </script>
 
 <div class="max-w-6xl mx-auto">
@@ -30,6 +37,7 @@
         color: var(--color-phosphor);
         box-shadow: var(--shadow-hard);
       "
+      onclick={() => showNewProject = true}
     >
       + New Project
     </button>
@@ -54,3 +62,11 @@
     </div>
   {/if}
 </div>
+
+{#if showNewProject}
+  <NodeForm
+    nodeType="project"
+    onSave={onProjectSaved}
+    onCancel={() => showNewProject = false}
+  />
+{/if}
