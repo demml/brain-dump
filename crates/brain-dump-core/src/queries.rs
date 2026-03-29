@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use ulid::Ulid;
 
 use crate::db::{DbError, DbResult};
@@ -305,6 +305,161 @@ pub fn get_edges(conn: &Connection, node_id: &str) -> DbResult<Vec<Edge>> {
     rows.collect::<Result<Vec<_>, _>>().map_err(DbError::Sqlite)
 }
 
+pub fn add_tag(conn: &Connection, node_id: &str, tag_name: &str) -> DbResult<Tag> {
+    get_node(conn, node_id)?;
+
+    let tag_id: Option<String> = conn
+        .query_row(
+            "SELECT id FROM tags WHERE name = ?1",
+            params![tag_name],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(DbError::Sqlite)?;
+
+    let tag_id = match tag_id {
+        Some(id) => id,
+        None => {
+            let id = new_id();
+            conn.execute(
+                "INSERT INTO tags (id, name, color) VALUES (?1, ?2, '#8ddb9f')",
+                params![id, tag_name],
+            )?;
+            id
+        }
+    };
+
+    conn.execute(
+        "INSERT OR IGNORE INTO node_tags (node_id, tag_id) VALUES (?1, ?2)",
+        params![node_id, tag_id],
+    )?;
+
+    Ok(Tag {
+        id: tag_id,
+        name: tag_name.to_string(),
+        color: "#8ddb9f".to_string(),
+    })
+}
+
+pub fn remove_tag(conn: &Connection, node_id: &str, tag_name: &str) -> DbResult<()> {
+    let affected = conn.execute(
+        "DELETE FROM node_tags WHERE node_id = ?1 AND tag_id = (SELECT id FROM tags WHERE name = ?2)",
+        params![node_id, tag_name],
+    )?;
+    if affected == 0 {
+        return Err(DbError::Custom(format!(
+            "tag '{tag_name}' not found on node {node_id}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn get_node_tags(conn: &Connection, node_id: &str) -> DbResult<Vec<Tag>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name, t.color FROM tags t
+         INNER JOIN node_tags nt ON nt.tag_id = t.id
+         WHERE nt.node_id = ?1
+         ORDER BY t.name",
+    )?;
+    let rows = stmt.query_map(params![node_id], |row| {
+        Ok(Tag {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            color: row.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(DbError::Sqlite)
+}
+
+pub fn list_tags(conn: &Connection) -> DbResult<Vec<Tag>> {
+    let mut stmt = conn.prepare("SELECT id, name, color FROM tags ORDER BY name")?;
+    let rows = stmt.query_map([], |row| {
+        Ok(Tag {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            color: row.get(2)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(DbError::Sqlite)
+}
+
+pub fn get_node_detail(conn: &Connection, id: &str) -> DbResult<NodeDetail> {
+    let node = get_node(conn, id)?;
+    let children = get_children(conn, id)?;
+    let tags = get_node_tags(conn, id)?;
+    let all_edges = get_edges(conn, id)?;
+
+    let blocks: Vec<Edge> = all_edges
+        .iter()
+        .filter(|e| e.source_id == id && e.edge_type == EdgeType::Blocks)
+        .cloned()
+        .collect();
+    let blocked_by: Vec<Edge> = all_edges
+        .iter()
+        .filter(|e| e.target_id == id && e.edge_type == EdgeType::Blocks)
+        .cloned()
+        .collect();
+    let related: Vec<Edge> = all_edges
+        .iter()
+        .filter(|e| e.edge_type == EdgeType::Related)
+        .cloned()
+        .collect();
+
+    let progress = if children.is_empty() {
+        None
+    } else {
+        let completed = children
+            .iter()
+            .filter(|c| c.status == NodeStatus::Completed)
+            .count();
+        Some(Progress {
+            completed,
+            total: children.len(),
+        })
+    };
+
+    Ok(NodeDetail {
+        node,
+        children,
+        tags,
+        blocks,
+        blocked_by,
+        related,
+        progress,
+    })
+}
+
+pub fn resolve_node(conn: &Connection, id_or_title: &str) -> DbResult<String> {
+    if let Ok(node) = get_node(conn, id_or_title) {
+        return Ok(node.id);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, title FROM nodes WHERE LOWER(title) = LOWER(?1)",
+    )?;
+    let matches: Vec<(String, String)> = stmt
+        .query_map(params![id_or_title], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DbError::Sqlite)?;
+
+    match matches.len() {
+        0 => Err(DbError::Custom(format!(
+            "no node found matching '{id_or_title}'"
+        ))),
+        1 => Ok(matches.into_iter().next().unwrap().0),
+        _ => {
+            let list = matches
+                .iter()
+                .map(|(id, title)| format!("  {id} — {title}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(DbError::Custom(format!(
+                "multiple nodes match '{id_or_title}':\n{list}"
+            )))
+        }
+    }
+}
+
 fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbResult<bool> {
     let mut visited: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
@@ -489,5 +644,49 @@ mod tests {
         delete_edge(&conn, &p1.id, EdgeType::Blocks, &p2.id).unwrap();
         let edges = get_edges(&conn, &p1.id).unwrap();
         assert!(!edges.iter().any(|e| e.edge_type == EdgeType::Blocks));
+    }
+
+    #[test]
+    fn test_add_and_list_tags() {
+        let mut conn = setup();
+        let p = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        add_tag(&conn, &p.id, "rust").unwrap();
+        add_tag(&conn, &p.id, "ml").unwrap();
+        let tags = get_node_tags(&conn, &p.id).unwrap();
+        assert_eq!(tags.len(), 2);
+        let all_tags = list_tags(&conn).unwrap();
+        assert_eq!(all_tags.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_tag() {
+        let mut conn = setup();
+        let p = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        add_tag(&conn, &p.id, "rust").unwrap();
+        remove_tag(&conn, &p.id, "rust").unwrap();
+        let tags = get_node_tags(&conn, &p.id).unwrap();
+        assert_eq!(tags.len(), 0);
+    }
+
+    #[test]
+    fn test_get_node_detail() {
+        let mut conn = setup();
+        let project = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let phase = create_node(&mut conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
+        create_node(&mut conn, NodeType::Task, "T1", Some(&phase.id)).unwrap();
+        create_node(&mut conn, NodeType::Task, "T2", Some(&phase.id)).unwrap();
+        add_tag(&conn, &project.id, "rust").unwrap();
+        let detail = get_node_detail(&conn, &project.id).unwrap();
+        assert_eq!(detail.children.len(), 1); // 1 phase
+        assert_eq!(detail.tags.len(), 1);
+        assert_eq!(detail.progress.unwrap().total, 1); // 1 child = phase
+    }
+
+    #[test]
+    fn test_resolve_node_by_title() {
+        let mut conn = setup();
+        let p = create_node(&mut conn, NodeType::Project, "My Project", None).unwrap();
+        let resolved = resolve_node(&conn, "my project").unwrap();
+        assert_eq!(resolved, p.id);
     }
 }
