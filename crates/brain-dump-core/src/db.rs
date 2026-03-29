@@ -44,7 +44,8 @@ fn migrate(conn: &Connection) -> DbResult<()> {
 
     if version < 1 {
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS nodes (
+            "BEGIN;
+            CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT PRIMARY KEY,
                 type TEXT NOT NULL CHECK(type IN ('project','phase','task')),
                 title TEXT NOT NULL,
@@ -86,7 +87,8 @@ fn migrate(conn: &Connection) -> DbResult<()> {
                 changed_at TEXT NOT NULL
             );
 
-            PRAGMA user_version = 1;"
+            PRAGMA user_version = 1;
+            COMMIT;"
         )?;
     }
 
