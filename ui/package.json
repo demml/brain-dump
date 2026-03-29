@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2"
@@ -19,6 +20,7 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^6",
-    "marked": "^15"
+    "marked": "^15",
+    "@tauri-apps/cli": "^2"
   }
 }
