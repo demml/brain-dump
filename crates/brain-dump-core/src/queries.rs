@@ -1,3 +1,5 @@
+use std::collections::{HashSet, VecDeque};
+
 use rusqlite::{params, Connection};
 use ulid::Ulid;
 
@@ -232,6 +234,106 @@ pub fn delete_node(conn: &mut Connection, id: &str) -> DbResult<()> {
     Ok(())
 }
 
+pub fn create_edge(
+    conn: &mut Connection,
+    source_id: &str,
+    target_id: &str,
+    edge_type: EdgeType,
+) -> DbResult<Edge> {
+    get_node(&*conn, source_id)?;
+    get_node(&*conn, target_id)?;
+
+    if edge_type == EdgeType::Blocks && has_path(&*conn, target_id, source_id, EdgeType::Blocks)? {
+        return Err(DbError::Custom(format!(
+            "cycle detected: adding {source_id} blocks {target_id} would create a cycle"
+        )));
+    }
+
+    let id = new_id();
+    let now = now_iso();
+
+    let sp = conn.savepoint()?;
+    sp.execute(
+        "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![id, source_id, target_id, edge_type.as_str(), now],
+    )?;
+    sp.commit()?;
+
+    Ok(Edge {
+        id,
+        source_id: source_id.to_string(),
+        target_id: target_id.to_string(),
+        edge_type,
+        created_at: now,
+    })
+}
+
+pub fn delete_edge(
+    conn: &Connection,
+    source_id: &str,
+    edge_type: EdgeType,
+    target_id: &str,
+) -> DbResult<()> {
+    let affected = conn.execute(
+        "DELETE FROM edges WHERE source_id = ?1 AND target_id = ?2 AND edge_type = ?3",
+        params![source_id, target_id, edge_type.as_str()],
+    )?;
+    if affected == 0 {
+        return Err(DbError::Custom("edge not found".to_string()));
+    }
+    Ok(())
+}
+
+pub fn get_edges(conn: &Connection, node_id: &str) -> DbResult<Vec<Edge>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, source_id, target_id, edge_type, created_at
+         FROM edges WHERE source_id = ?1 OR target_id = ?1",
+    )?;
+    let rows = stmt.query_map(params![node_id], |row| {
+        let edge_type_str: String = row.get(3)?;
+        Ok(Edge {
+            id: row.get(0)?,
+            source_id: row.get(1)?,
+            target_id: row.get(2)?,
+            edge_type: edge_type_str
+                .parse::<EdgeType>()
+                .map_err(rusqlite::Error::InvalidColumnName)?,
+            created_at: row.get(4)?,
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(DbError::Sqlite)
+}
+
+fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbResult<bool> {
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<String> = VecDeque::new();
+    queue.push_back(from.to_string());
+
+    let mut stmt = conn.prepare(
+        "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = ?2",
+    )?;
+
+    while let Some(current) = queue.pop_front() {
+        if current == to {
+            return Ok(true);
+        }
+        if !visited.insert(current.clone()) {
+            continue;
+        }
+        let neighbors = stmt
+            .query_map(params![current, edge_type.as_str()], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(DbError::Sqlite)?;
+        for neighbor in neighbors {
+            if !visited.contains(&neighbor) {
+                queue.push_back(neighbor);
+            }
+        }
+    }
+    Ok(false)
+}
+
 fn delete_node_recursive(conn: &Connection, id: &str) -> DbResult<()> {
     let children = get_children(conn, id)?;
     for child in &children {
@@ -334,5 +436,49 @@ mod tests {
         let active = list_nodes(&conn, NodeType::Project, None, Some(NodeStatus::Active), None).unwrap();
         assert_eq!(active.len(), 1);
         assert_eq!(active[0].title, "Active");
+    }
+
+    #[test]
+    fn test_create_blocks_edge() {
+        let mut conn = setup();
+        let p1 = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
+        let edge = create_edge(&mut conn, &p1.id, &p2.id, EdgeType::Blocks).unwrap();
+        assert_eq!(edge.edge_type, EdgeType::Blocks);
+        assert_eq!(edge.source_id, p1.id);
+        assert_eq!(edge.target_id, p2.id);
+    }
+
+    #[test]
+    fn test_cycle_detection() {
+        let mut conn = setup();
+        let p1 = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
+        let p3 = create_node(&mut conn, NodeType::Project, "P3", None).unwrap();
+        create_edge(&mut conn, &p1.id, &p2.id, EdgeType::Blocks).unwrap();
+        create_edge(&mut conn, &p2.id, &p3.id, EdgeType::Blocks).unwrap();
+        let err = create_edge(&mut conn, &p3.id, &p1.id, EdgeType::Blocks);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_related_edge_appears_in_get_edges() {
+        let mut conn = setup();
+        let p1 = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
+        create_edge(&mut conn, &p1.id, &p2.id, EdgeType::Related).unwrap();
+        let edges = get_edges(&conn, &p1.id).unwrap();
+        assert!(edges.iter().any(|e| e.edge_type == EdgeType::Related));
+    }
+
+    #[test]
+    fn test_delete_edge() {
+        let mut conn = setup();
+        let p1 = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
+        create_edge(&mut conn, &p1.id, &p2.id, EdgeType::Blocks).unwrap();
+        delete_edge(&conn, &p1.id, EdgeType::Blocks, &p2.id).unwrap();
+        let edges = get_edges(&conn, &p1.id).unwrap();
+        assert!(!edges.iter().any(|e| e.edge_type == EdgeType::Blocks));
     }
 }
