@@ -17,21 +17,24 @@ impl NodeType {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "project" => Ok(Self::Project),
-            "phase" => Ok(Self::Phase),
-            "task" => Ok(Self::Task),
-            _ => Err(format!("invalid node type: {s}")),
-        }
-    }
-
     /// Returns the allowed child type for this node type (if any)
     pub fn child_type(&self) -> Option<NodeType> {
         match self {
             Self::Project => Some(Self::Phase),
             Self::Phase => Some(Self::Task),
             Self::Task => None,
+        }
+    }
+}
+
+impl std::str::FromStr for NodeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "project" => Ok(Self::Project),
+            "phase" => Ok(Self::Phase),
+            "task" => Ok(Self::Task),
+            _ => Err(format!("invalid node type: {s}")),
         }
     }
 }
@@ -52,8 +55,11 @@ impl NodeStatus {
             Self::Archived => "archived",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for NodeStatus {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "active" => Ok(Self::Active),
             "completed" => Ok(Self::Completed),
@@ -79,8 +85,11 @@ impl EdgeType {
             Self::Related => "related",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for EdgeType {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "parent" => Ok(Self::Parent),
             "blocks" => Ok(Self::Blocks),

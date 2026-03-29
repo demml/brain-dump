@@ -16,9 +16,10 @@ pub enum DbError {
 pub type DbResult<T> = Result<T, DbError>;
 
 /// Returns the default DB path: ~/.brain-dump/brain-dump.db
-pub fn default_db_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".brain-dump").join("brain-dump.db")
+pub fn default_db_path() -> DbResult<PathBuf> {
+    dirs::home_dir()
+        .map(|h| h.join(".brain-dump").join("brain-dump.db"))
+        .ok_or_else(|| DbError::Custom("cannot determine home directory".to_string()))
 }
 
 /// Open (or create) the database, run migrations, enable WAL.

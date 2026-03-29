@@ -9,3 +9,4 @@ thiserror = "2"
 rusqlite = { version = "0.39", features = ["bundled"] }
 ulid = "1"
 chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"

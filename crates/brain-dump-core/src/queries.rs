@@ -14,7 +14,7 @@ fn new_id() -> String {
 }
 
 pub fn create_node(
-    conn: &Connection,
+    conn: &mut Connection,
     node_type: NodeType,
     title: &str,
     parent_id: Option<&str>,
@@ -39,21 +39,22 @@ pub fn create_node(
         }
     }
 
-    conn.execute(
+    let sp = conn.savepoint()?;
+    sp.execute(
         "INSERT INTO nodes (id, type, title, description, status, sort_order, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, 'active', 0, ?5, ?5)",
         params![id, node_type.as_str(), title, description, now],
     )?;
 
-    // Create parent edge if parent_id provided
     if let Some(pid) = parent_id {
         let edge_id = new_id();
-        conn.execute(
+        sp.execute(
             "INSERT INTO edges (id, source_id, target_id, edge_type, created_at)
              VALUES (?1, ?2, ?3, 'parent', ?4)",
             params![edge_id, pid, id, now],
         )?;
     }
+    sp.commit()?;
 
     get_node(conn, &id)
 }
@@ -64,12 +65,18 @@ pub fn get_node(conn: &Connection, id: &str) -> DbResult<Node> {
          FROM nodes WHERE id = ?1",
         params![id],
         |row| {
+            let node_type_str: String = row.get(1)?;
+            let status_str: String = row.get(4)?;
             Ok(Node {
                 id: row.get(0)?,
-                node_type: NodeType::from_str(&row.get::<_, String>(1)?).unwrap(),
+                node_type: node_type_str
+                    .parse::<NodeType>()
+                    .map_err(rusqlite::Error::InvalidColumnName)?,
                 title: row.get(2)?,
                 description: row.get(3)?,
-                status: NodeStatus::from_str(&row.get::<_, String>(4)?).unwrap(),
+                status: status_str
+                    .parse::<NodeStatus>()
+                    .map_err(rusqlite::Error::InvalidColumnName)?,
                 sort_order: row.get(5)?,
                 created_at: row.get(6)?,
                 updated_at: row.get(7)?,
@@ -129,12 +136,18 @@ pub fn list_nodes(
         param_values.iter().map(|(k, v)| (*k, v.as_ref())).collect();
 
     let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        let node_type_str: String = row.get(1)?;
+        let status_str: String = row.get(4)?;
         Ok(Node {
             id: row.get(0)?,
-            node_type: NodeType::from_str(&row.get::<_, String>(1)?).unwrap(),
+            node_type: node_type_str
+                .parse::<NodeType>()
+                .map_err(rusqlite::Error::InvalidColumnName)?,
             title: row.get(2)?,
             description: row.get(3)?,
-            status: NodeStatus::from_str(&row.get::<_, String>(4)?).unwrap(),
+            status: status_str
+                .parse::<NodeStatus>()
+                .map_err(rusqlite::Error::InvalidColumnName)?,
             sort_order: row.get(5)?,
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
@@ -191,12 +204,18 @@ pub fn get_children(conn: &Connection, parent_id: &str) -> DbResult<Vec<Node>> {
          ORDER BY n.sort_order, n.created_at"
     )?;
     let rows = stmt.query_map(params![parent_id], |row| {
+        let node_type_str: String = row.get(1)?;
+        let status_str: String = row.get(4)?;
         Ok(Node {
             id: row.get(0)?,
-            node_type: NodeType::from_str(&row.get::<_, String>(1)?).unwrap(),
+            node_type: node_type_str
+                .parse::<NodeType>()
+                .map_err(rusqlite::Error::InvalidColumnName)?,
             title: row.get(2)?,
             description: row.get(3)?,
-            status: NodeStatus::from_str(&row.get::<_, String>(4)?).unwrap(),
+            status: status_str
+                .parse::<NodeStatus>()
+                .map_err(rusqlite::Error::InvalidColumnName)?,
             sort_order: row.get(5)?,
             created_at: row.get(6)?,
             updated_at: row.get(7)?,
@@ -205,13 +224,18 @@ pub fn get_children(conn: &Connection, parent_id: &str) -> DbResult<Vec<Node>> {
     rows.collect::<Result<Vec<_>, _>>().map_err(DbError::Sqlite)
 }
 
-pub fn delete_node(conn: &Connection, id: &str) -> DbResult<()> {
-    // Verify node exists
+pub fn delete_node(conn: &mut Connection, id: &str) -> DbResult<()> {
     let _ = get_node(conn, id)?;
-    // Recursively delete children first (CASCADE only removes edges, not child nodes)
+    let sp = conn.savepoint()?;
+    delete_node_recursive(&sp, id)?;
+    sp.commit()?;
+    Ok(())
+}
+
+fn delete_node_recursive(conn: &Connection, id: &str) -> DbResult<()> {
     let children = get_children(conn, id)?;
     for child in &children {
-        delete_node(conn, &child.id)?;
+        delete_node_recursive(conn, &child.id)?;
     }
     conn.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
     Ok(())
@@ -230,8 +254,8 @@ mod tests {
 
     #[test]
     fn test_create_and_get_project() {
-        let conn = setup();
-        let node = create_node(&conn, NodeType::Project, "Test Project", None).unwrap();
+        let mut conn = setup();
+        let node = create_node(&mut conn, NodeType::Project, "Test Project", None).unwrap();
         assert_eq!(node.title, "Test Project");
         assert_eq!(node.node_type, NodeType::Project);
         assert_eq!(node.status, NodeStatus::Active);
@@ -243,9 +267,9 @@ mod tests {
 
     #[test]
     fn test_create_phase_under_project() {
-        let conn = setup();
-        let project = create_node(&conn, NodeType::Project, "P1", None).unwrap();
-        let phase = create_node(&conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
+        let mut conn = setup();
+        let project = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let phase = create_node(&mut conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
         assert_eq!(phase.node_type, NodeType::Phase);
 
         let phases = list_nodes(&conn, NodeType::Phase, Some(&project.id), None, None).unwrap();
@@ -255,26 +279,26 @@ mod tests {
 
     #[test]
     fn test_create_task_under_phase() {
-        let conn = setup();
-        let project = create_node(&conn, NodeType::Project, "P1", None).unwrap();
-        let phase = create_node(&conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
-        let task = create_node(&conn, NodeType::Task, "Task 1", Some(&phase.id)).unwrap();
+        let mut conn = setup();
+        let project = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let phase = create_node(&mut conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
+        let task = create_node(&mut conn, NodeType::Task, "Task 1", Some(&phase.id)).unwrap();
         assert_eq!(task.node_type, NodeType::Task);
     }
 
     #[test]
     fn test_hierarchy_enforcement() {
-        let conn = setup();
-        let project = create_node(&conn, NodeType::Project, "P1", None).unwrap();
+        let mut conn = setup();
+        let project = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
         // Can't add a task directly under a project
-        let err = create_node(&conn, NodeType::Task, "T1", Some(&project.id));
+        let err = create_node(&mut conn, NodeType::Task, "T1", Some(&project.id));
         assert!(err.is_err());
     }
 
     #[test]
     fn test_update_node_status_logs_history() {
-        let conn = setup();
-        let node = create_node(&conn, NodeType::Project, "P1", None).unwrap();
+        let mut conn = setup();
+        let node = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
         update_node(&conn, &node.id, None, None, Some(NodeStatus::Completed), None).unwrap();
 
         let count: i32 = conn.query_row(
@@ -287,22 +311,24 @@ mod tests {
 
     #[test]
     fn test_delete_node_cascades_children() {
-        let conn = setup();
-        let project = create_node(&conn, NodeType::Project, "P1", None).unwrap();
-        let phase = create_node(&conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
-        let _task = create_node(&conn, NodeType::Task, "Task 1", Some(&phase.id)).unwrap();
+        let mut conn = setup();
+        let project = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let phase = create_node(&mut conn, NodeType::Phase, "Phase 1", Some(&project.id)).unwrap();
+        let task = create_node(&mut conn, NodeType::Task, "Task 1", Some(&phase.id)).unwrap();
 
-        delete_node(&conn, &project.id).unwrap();
+        delete_node(&mut conn, &project.id).unwrap();
 
         // Phase should also be gone (recursive delete)
         assert!(get_node(&conn, &phase.id).is_err());
+        // Also verify the task (grandchild) is gone
+        assert!(get_node(&conn, &task.id).is_err());
     }
 
     #[test]
     fn test_list_projects_by_status() {
-        let conn = setup();
-        create_node(&conn, NodeType::Project, "Active", None).unwrap();
-        let p2 = create_node(&conn, NodeType::Project, "Done", None).unwrap();
+        let mut conn = setup();
+        create_node(&mut conn, NodeType::Project, "Active", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "Done", None).unwrap();
         update_node(&conn, &p2.id, None, None, Some(NodeStatus::Completed), None).unwrap();
 
         let active = list_nodes(&conn, NodeType::Project, None, Some(NodeStatus::Active), None).unwrap();
