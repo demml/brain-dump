@@ -7,8 +7,14 @@ use commands::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let db_path = db::default_db_path().expect("cannot determine database path");
-    let conn = db::open_db(&db_path).expect("failed to open database");
+    let db_path = db::default_db_path().unwrap_or_else(|e| {
+        eprintln!("brain-dump: cannot determine database path: {e}");
+        std::process::exit(1);
+    });
+    let conn = db::open_db(&db_path).unwrap_or_else(|e| {
+        eprintln!("brain-dump: failed to open database at {}: {e}", db_path.display());
+        std::process::exit(1);
+    });
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
