@@ -669,7 +669,7 @@ pub fn list_nodes(
         "SELECT n.id, n.type, n.title, n.description, n.status, n.sort_order, n.created_at, n.updated_at
          FROM nodes n"
     );
-    let mut conditions = vec![format!("n.type = '{}'", node_type.as_str())];
+    let mut conditions = vec!["n.type = :node_type".to_string()];
 
     if parent_id.is_some() {
         sql.push_str(" INNER JOIN edges e ON e.target_id = n.id AND e.edge_type = 'parent'");
@@ -681,8 +681,8 @@ pub fn list_nodes(
         conditions.push("t.name = :tag".to_string());
     }
 
-    if let Some(s) = &status {
-        conditions.push(format!("n.status = '{}'", s.as_str()));
+    if status.is_some() {
+        conditions.push("n.status = :status".to_string());
     }
 
     sql.push_str(&format!(" WHERE {}", conditions.join(" AND ")));
@@ -690,13 +690,17 @@ pub fn list_nodes(
 
     let mut stmt = conn.prepare(&sql)?;
 
-    // Build named params
+    // All params are parameterized — no string interpolation
     let mut param_values: Vec<(&str, Box<dyn rusqlite::types::ToSql>)> = Vec::new();
+    param_values.push((":node_type", Box::new(node_type.as_str().to_string())));
     if let Some(pid) = parent_id {
         param_values.push((":parent_id", Box::new(pid.to_string())));
     }
     if let Some(t) = tag {
         param_values.push((":tag", Box::new(t.to_string())));
+    }
+    if let Some(s) = &status {
+        param_values.push((":status", Box::new(s.as_str().to_string())));
     }
 
     let param_refs: Vec<(&str, &dyn rusqlite::types::ToSql)> =
@@ -760,6 +764,11 @@ pub fn update_node(
 pub fn delete_node(conn: &Connection, id: &str) -> DbResult<()> {
     // Verify node exists
     let _ = get_node(conn, id)?;
+    // Recursively delete children first (CASCADE only removes edges, not child nodes)
+    let children = get_children(conn, id)?;
+    for child in &children {
+        delete_node(conn, &child.id)?;
+    }
     conn.execute("DELETE FROM nodes WHERE id = ?1", params![id])?;
     Ok(())
 }
@@ -990,6 +999,10 @@ fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbR
     let mut queue = std::collections::VecDeque::new();
     queue.push_back(from.to_string());
 
+    let mut stmt = conn.prepare(
+        "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = ?2"
+    )?;
+
     while let Some(current) = queue.pop_front() {
         if current == to {
             return Ok(true);
@@ -997,9 +1010,6 @@ fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbR
         if !visited.insert(current.clone()) {
             continue;
         }
-        let mut stmt = conn.prepare(
-            "SELECT target_id FROM edges WHERE source_id = ?1 AND edge_type = ?2"
-        )?;
         let targets: Vec<String> = stmt
             .query_map(params![current, edge_type.as_str()], |row| row.get(0))?
             .filter_map(|r| r.ok())
@@ -1681,7 +1691,7 @@ Create `crates/brain-dump-app/tauri.conf.json`:
   "$schema": "https://raw.githubusercontent.com/nicholasgasior/tauri-schema/refs/heads/main/tauri.conf.json",
   "productName": "brain-dump",
   "version": "0.1.0",
-  "identifier": "com.brain-dump.app",
+  "identifier": "com.braindump.app",
   "build": {
     "frontendDist": "../../../ui/build",
     "devUrl": "http://localhost:1420",
@@ -1748,7 +1758,10 @@ pub fn update_node(
     sort_order: Option<i32>,
 ) -> Result<Node, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
-    let s = status.as_deref().map(|s| NodeStatus::from_str(s).unwrap());
+    let s = match status.as_deref() {
+        Some(s) => Some(NodeStatus::from_str(s).map_err(|e| e.to_string())?),
+        None => None,
+    };
     queries::update_node(&conn, &id, title.as_deref(), description.as_deref(), s, sort_order)
         .map_err(|e| e.to_string())
 }
@@ -1775,7 +1788,10 @@ pub fn list_nodes(
 ) -> Result<Vec<Node>, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let nt = NodeType::from_str(&node_type).map_err(|e| e.to_string())?;
-    let s = status.as_deref().map(|s| NodeStatus::from_str(s).unwrap());
+    let s = match status.as_deref() {
+        Some(s) => Some(NodeStatus::from_str(s).map_err(|e| e.to_string())?),
+        None => None,
+    };
     queries::list_nodes(&conn, nt, parent_id.as_deref(), s, tag.as_deref())
         .map_err(|e| e.to_string())
 }
@@ -2249,17 +2265,16 @@ Create `ui/src/routes/+layout.svelte`:
 Create `ui/src/routes/+page.svelte`:
 ```svelte
 <script lang="ts">
+  import { onMount } from "svelte";
   import { listNodes } from "$lib/tauri";
   import type { Node } from "$lib/types";
 
   let projects = $state<Node[]>([]);
   let loading = $state(true);
 
-  $effect(() => {
-    listNodes("project").then((p) => {
-      projects = p;
-      loading = false;
-    });
+  onMount(async () => {
+    projects = await listNodes("project");
+    loading = false;
   });
 </script>
 
