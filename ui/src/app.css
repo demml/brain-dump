@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+@theme {
+  /* Phosphor green palette */
+  --color-bg: oklch(5.5% 0.003 150);
+  --color-bg-card: oklch(15% 0.004 150);
+  --color-bg-card-hover: oklch(18% 0.006 150);
+  --color-bg-input: oklch(10% 0.004 150);
+  --color-border: oklch(40% 0.08 150 / 0.4);
+  --color-border-bright: oklch(55% 0.10 150 / 0.6);
+  --color-phosphor: oklch(82% 0.14 152);
+  --color-phosphor-dim: oklch(65% 0.10 150);
+  --color-phosphor-bright: oklch(88% 0.16 150);
+  --color-phosphor-muted: oklch(50% 0.08 150);
+  --color-danger: oklch(65% 0.20 25);
+  --color-warning: oklch(75% 0.15 80);
+  --color-success: oklch(75% 0.15 150);
+
+  /* Neo-brutalist shadows */
+  --shadow-hard: 3px 3px 0 0 oklch(40% 0.08 150 / 0.3);
+  --shadow-glow: 0 0 12px 2px oklch(65% 0.14 150 / 0.15);
+
+  /* Font */
+  --font-family-mono: "JetBrains Mono", monospace;
+}
+
+/* Base styles */
+body {
+  background-color: var(--color-bg);
+  color: var(--color-phosphor);
+  font-family: var(--font-family-mono);
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Scanline CRT overlay */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    oklch(0% 0 0 / 0.06) 2px,
+    oklch(0% 0 0 / 0.06) 4px
+  );
+}
+
+/* Vignette */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9998;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 60%,
+    oklch(0% 0 0 / 0.3) 100%
+  );
+}
+
+/* Phosphor bloom on text */
+h1, h2, h3, h4, strong {
+  text-shadow: 0 0 1px oklch(75% 0.08 150 / 0.12);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--color-bg); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-bright); }
