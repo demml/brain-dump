@@ -288,7 +288,7 @@ pub fn delete_edge(
 pub fn get_edges(conn: &Connection, node_id: &str) -> DbResult<Vec<Edge>> {
     let mut stmt = conn.prepare(
         "SELECT id, source_id, target_id, edge_type, created_at
-         FROM edges WHERE source_id = ?1 OR target_id = ?1",
+         FROM edges WHERE (source_id = ?1 OR target_id = ?1) AND edge_type != 'parent'",
     )?;
     let rows = stmt.query_map(params![node_id], |row| {
         let edge_type_str: String = row.get(3)?;
@@ -308,6 +308,7 @@ pub fn get_edges(conn: &Connection, node_id: &str) -> DbResult<Vec<Edge>> {
 fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbResult<bool> {
     let mut visited: HashSet<String> = HashSet::new();
     let mut queue: VecDeque<String> = VecDeque::new();
+    visited.insert(from.to_string());
     queue.push_back(from.to_string());
 
     let mut stmt = conn.prepare(
@@ -318,15 +319,12 @@ fn has_path(conn: &Connection, from: &str, to: &str, edge_type: EdgeType) -> DbR
         if current == to {
             return Ok(true);
         }
-        if !visited.insert(current.clone()) {
-            continue;
-        }
         let neighbors = stmt
             .query_map(params![current, edge_type.as_str()], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(DbError::Sqlite)?;
         for neighbor in neighbors {
-            if !visited.contains(&neighbor) {
+            if visited.insert(neighbor.clone()) {
                 queue.push_back(neighbor);
             }
         }
@@ -468,7 +466,18 @@ mod tests {
         let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
         create_edge(&mut conn, &p1.id, &p2.id, EdgeType::Related).unwrap();
         let edges = get_edges(&conn, &p1.id).unwrap();
-        assert!(edges.iter().any(|e| e.edge_type == EdgeType::Related));
+        let related_edge = edges.iter().find(|e| e.edge_type == EdgeType::Related).unwrap();
+        assert_eq!(related_edge.source_id, p1.id);
+        assert_eq!(related_edge.target_id, p2.id);
+    }
+
+    #[test]
+    fn test_delete_edge_not_found() {
+        let mut conn = setup();
+        let p1 = create_node(&mut conn, NodeType::Project, "P1", None).unwrap();
+        let p2 = create_node(&mut conn, NodeType::Project, "P2", None).unwrap();
+        let err = delete_edge(&conn, &p1.id, EdgeType::Blocks, &p2.id);
+        assert!(err.is_err());
     }
 
     #[test]
