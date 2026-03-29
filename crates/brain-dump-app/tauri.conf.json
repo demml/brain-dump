@@ -1,0 +1,29 @@
+{
+  "productName": "brain-dump",
+  "version": "0.1.0",
+  "identifier": "com.braindump.app",
+  "build": {
+    "frontendDist": "../../../ui/build",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "cd ../../../ui && pnpm dev",
+    "beforeBuildCommand": "cd ../../../ui && pnpm build"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "title": "brain-dump",
+        "width": 1280,
+        "height": 900
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    }
+  }
+}

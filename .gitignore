@@ -1,0 +1,8 @@
+/target
+ui/node_modules
+ui/.svelte-kit
+ui/build
+.DS_Store
+*.db
+*.db-wal
+*.db-shm
