@@ -5,10 +5,16 @@
 
   let projects = $state<Node[]>([]);
   let loading = $state(true);
+  let error = $state<string | null>(null);
 
   onMount(async () => {
-    projects = await listNodes("project");
-    loading = false;
+    try {
+      projects = await listNodes("project");
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loading = false;
+    }
   });
 </script>
 
@@ -25,6 +31,10 @@
 
   {#if loading}
     <p class="text-[var(--color-phosphor-dim)]">Loading...</p>
+  {:else if error}
+    <div class="border-2 border-[var(--color-danger)] p-4 text-[var(--color-danger)]">
+      <p>Failed to load projects: {error}</p>
+    </div>
   {:else if projects.length === 0}
     <div class="border-2 border-dashed border-[var(--color-border)] p-8 text-center text-[var(--color-phosphor-dim)]">
       <p>No projects yet. Create one to get started.</p>
@@ -39,7 +49,7 @@
           style="box-shadow: var(--shadow-hard);"
         >
           <h3 class="font-bold text-[var(--color-phosphor-bright)] mb-2">{project.title}</h3>
-          <p class="text-sm text-[var(--color-phosphor-dim)] line-clamp-2">{project.description.slice(0, 100)}</p>
+          <p class="text-sm text-[var(--color-phosphor-dim)] line-clamp-2">{(project.description ?? "").slice(0, 100)}</p>
           <div class="mt-3 flex items-center gap-2 text-xs text-[var(--color-phosphor-muted)]">
             <span>{project.status}</span>
           </div>

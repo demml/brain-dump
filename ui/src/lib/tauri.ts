@@ -13,7 +13,7 @@ export async function updateNode(
   id: string,
   title?: string,
   description?: string,
-  status?: string,
+  status?: "active" | "completed" | "archived",
   sortOrder?: number,
 ): Promise<Node> {
   return invoke("update_node", {
