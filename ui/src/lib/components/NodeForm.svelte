@@ -39,11 +39,15 @@
         // Edit existing
         saved = await updateNode(node.id, title.trim(), description);
       } else {
-        // Create new
+        // Create new — node exists in backend after this point regardless of what follows
         saved = await createNode(nodeType, title.trim(), parentId);
-        // Update description if user changed it from template
+        // Try to update description; if it fails, the node is still usable as created
         if (description !== saved.description) {
-          saved = await updateNode(saved.id, undefined, description);
+          try {
+            saved = await updateNode(saved.id, undefined, description);
+          } catch {
+            // Description update failed but the node exists — proceed with the created node
+          }
         }
       }
       onSave(saved);

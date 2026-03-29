@@ -20,9 +20,13 @@
     }
   });
 
-  async function onProjectSaved(node: Node) {
+  async function onProjectSaved(_node: Node) {
     showNewProject = false;
-    projects = await listNodes("project");
+    try {
+      projects = await listNodes("project");
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    }
   }
 </script>
 
