@@ -437,7 +437,7 @@ pub fn resolve_node(conn: &Connection, id_or_title: &str) -> DbResult<String> {
     let mut stmt = conn.prepare(
         "SELECT id, title FROM nodes WHERE LOWER(title) = LOWER(?1)",
     )?;
-    let matches: Vec<(String, String)> = stmt
+    let mut matches: Vec<(String, String)> = stmt
         .query_map(params![id_or_title], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(DbError::Sqlite)?;
@@ -446,7 +446,7 @@ pub fn resolve_node(conn: &Connection, id_or_title: &str) -> DbResult<String> {
         0 => Err(DbError::Custom(format!(
             "no node found matching '{id_or_title}'"
         ))),
-        1 => Ok(matches.into_iter().next().unwrap().0),
+        1 => Ok(matches.remove(0).0),
         _ => {
             let list = matches
                 .iter()
